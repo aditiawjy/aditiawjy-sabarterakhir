@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 780px;
+      min-height: 560px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #ddd;
+    }
+    
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      color: #333;
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 999px;
+      letter-spacing: 0.2px;
+      text-transform: uppercase;
+      background: #eceff1;
+      color: #455a64;
+    }
+
+    .status-badge.running {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .status-badge.stopped {
+      background: #eceff1;
+      color: #455a64;
+    }
+
+    .status-badge.error {
+      background: #ffebee;
+      color: #c62828;
+    }
+    
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ccc;
+    }
+    
+    .status-dot.active {
+      background: #4CAF50;
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+    
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    
+    button {
+      flex: 1;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      background: #2196F3;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+    
+    button:hover {
+      background: #1976D2;
+    }
+    
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    button.export {
+      background: #4CAF50;
+    }
+    
+    button.export:hover {
+      background: #388E3C;
+    }
+
+    button.secondary {
+      background: #546e7a;
+    }
+
+    button.secondary:hover {
+      background: #455a64;
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: 1fr 180px;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .filters input,
+    .filters select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #cfd8dc;
+      border-radius: 4px;
+      font-size: 12px;
+      background: white;
+      box-sizing: border-box;
+    }
+
+    .meta {
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: #546e7a;
+    }
+
+    .filter-chips {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .chip {
+      border: 1px solid #cfd8dc;
+      background: #ffffff;
+      color: #455a64;
+      border-radius: 999px;
+      font-size: 11px;
+      padding: 6px 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .chip.active {
+      border-color: #1e88e5;
+      background: #e3f2fd;
+      color: #1565c0;
+      font-weight: 600;
+    }
+
+    .reset-link {
+      border: none;
+      background: transparent;
+      color: #1565c0;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+      margin-left: auto;
+    }
+
+    .error-card {
+      display: none;
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      border: 1px solid #ffcdd2;
+      background: #ffebee;
+      color: #b71c1c;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .error-card.visible {
+      display: block;
+    }
+
+    .analysis-section {
+      margin-top: 14px;
+      background: white;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding-bottom: 10px;
+    }
+
+    .analysis-header {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e6edf2;
+      font-weight: 700;
+      color: #2f3c44;
+      font-size: 13px;
+    }
+
+    .analysis-controls {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .analysis-controls .chip {
+      padding: 5px 9px;
+    }
+
+    .analysis-controls .chip.signal {
+      border-color: #66bb6a;
+      color: #1b5e20;
+    }
+
+    .analysis-controls .chip.signal.active {
+      background: #e8f5e9;
+      border-color: #43a047;
+      color: #1b5e20;
+    }
+
+    .analysis-export-btn {
+      margin-left: auto;
+      border: 1px solid #b0bec5;
+      background: #ffffff;
+      color: #455a64;
+      border-radius: 4px;
+      font-size: 11px;
+      padding: 5px 8px;
+      cursor: pointer;
+    }
+
+    .analysis-export-btn:hover {
+      background: #f5f8fa;
+    }
+
+    .analysis-table-wrap {
+      max-height: 220px;
+      overflow: auto;
+      padding: 0 12px;
+    }
+
+    .analysis-table-wrap.compact {
+      max-height: 160px;
+    }
+
+    .analysis-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      table-layout: fixed;
+    }
+
+    .analysis-table th,
+    .analysis-table td {
+      border-bottom: 1px solid #eef2f5;
+      padding: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: left;
+      color: #37474f;
+    }
+
+    .analysis-match-cell {
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      line-height: 1.25;
+    }
+
+    .analysis-match-teams {
+      display: block;
+      font-weight: 600;
+      color: #263238;
+      word-break: break-word;
+    }
+
+    .analysis-match-league {
+      display: block;
+      margin-top: 2px;
+      font-size: 10px;
+      color: #607d8b;
+      word-break: break-word;
+    }
+
+    .analysis-table th {
+      background: #f7fafc;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      font-weight: 700;
+      color: #455a64;
+    }
+
+    .pattern-badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 6px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .pattern-breakout { background: #ffebee; color: #b71c1c; }
+    .pattern-drift_up { background: #e8f5e9; color: #1b5e20; }
+    .pattern-drift_down { background: #fff3e0; color: #e65100; }
+    .pattern-whipsaw { background: #ede7f6; color: #4527a0; }
+    .pattern-stable { background: #eceff1; color: #455a64; }
+    .pattern-warming_up { background: #fffde7; color: #827717; }
+
+    .signal-badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 6px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .signal-over {
+      background: #e8f5e9;
+      color: #1b5e20;
+    }
+
+    .signal-no {
+      background: #eceff1;
+      color: #455a64;
+    }
+
+    .analysis-score-cell {
+      white-space: nowrap;
+    }
+
+    .analysis-score-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .analysis-score-goal {
+      animation: goalPulse 2.5s ease-out;
+      background: #e8f5e9;
+      color: #1b5e20;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-weight: 700;
+    }
+
+    .analysis-goal-chip {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 700;
+      background: #c8e6c9;
+      color: #1b5e20;
+      letter-spacing: 0.2px;
+    }
+
+    .gap-highlight {
+      background: #fff3e0;
+      color: #e65100;
+      font-weight: 700;
+      border-radius: 4px;
+      padding: 1px 4px;
+      display: inline-block;
+    }
+
+    @keyframes goalPulse {
+      0% { box-shadow: 0 0 0 0 rgba(67, 160, 71, 0.45); background: #c8e6c9; }
+      35% { box-shadow: 0 0 0 6px rgba(67, 160, 71, 0.15); background: #dcedc8; }
+      100% { box-shadow: 0 0 0 0 rgba(67, 160, 71, 0); background: #e8f5e9; }
+    }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    
+    .stat-card {
+      background: white;
+      padding: 12px;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .stat-label {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 4px;
+    }
+    
+    .stat-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+    }
+    
+    .data-section {
+      background: white;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    .events-table-wrapper {
+      overflow-x: auto;
+    }
+
+    .events-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 11px;
+    }
+
+    .events-table col:nth-child(1) { width: 36%; }
+    .events-table col:nth-child(2) { width: 9%; }
+    .events-table col:nth-child(3) { width: 9%; }
+    .events-table col:nth-child(4) { width: 12%; }
+    .events-table col:nth-child(5) { width: 12%; }
+    .events-table col:nth-child(6) { width: 12%; }
+    .events-table col:nth-child(7) { width: 10%; }
+
+    .events-table th,
+    .events-table td {
+      border-bottom: 1px solid #eceff1;
+      padding: 6px;
+      text-align: left;
+      vertical-align: top;
+      color: #263238;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .events-table th {
+      position: sticky;
+      top: 0;
+      background: #f3f6f8;
+      z-index: 1;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .events-table th.no-sort {
+      cursor: default;
+    }
+
+    .events-table th.sorted {
+      color: #1565c0;
+    }
+
+    .score-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #e3f2fd;
+      color: #0d47a1;
+      font-weight: 700;
+      font-size: 10px;
+    }
+
+    .time-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #fff8e1;
+      color: #ef6c00;
+      font-weight: 700;
+      font-size: 10px;
+    }
+
+    .teams-cell .league-sub {
+      display: block;
+      margin-top: 3px;
+      font-size: 10px;
+      color: #607d8b;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .odds-stack-cell {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+
+    .odds-stack-item {
+      display: block;
+      line-height: 1.35;
+      font-weight: 600;
+      color: #37474f;
+    }
+
+    .ou-stack-cell {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+
+    .ou-stack-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      line-height: 1.35;
+      color: #37474f;
+      font-weight: 600;
+    }
+
+    .ou-market-type {
+      color: #607d8b;
+      min-width: 28px;
+    }
+
+    .ou-market-odds {
+      color: #263238;
+    }
+
+    .events-table tr:nth-child(even) td {
+      background: #fafcfd;
+    }
+    
+    .section-header {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+      font-weight: bold;
+      color: #333;
+    }
+    
+    .league-item {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    
+    .league-item:last-child {
+      border-bottom: none;
+    }
+    
+    .league-name {
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 8px;
+    }
+    
+    .event-item {
+      padding: 8px;
+      background: #f9f9f9;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    
+    .event-score {
+      font-weight: bold;
+      color: #2196F3;
+    }
+    
+    .event-teams {
+      color: #333;
+      margin: 4px 0;
+    }
+    
+    .event-time {
+      color: #666;
+    }
+    
+    .no-data {
+      padding: 32px;
+      text-align: center;
+      color: #666;
+    }
+    
+    .settings {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #ddd;
+    }
+    
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .setting-item-column {
+      display: block;
+      margin-bottom: 10px;
+    }
+    
+    .setting-label {
+      font-size: 14px;
+      color: #333;
+    }
+
+    .setting-select {
+      margin-top: 6px;
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #cfd8dc;
+      border-radius: 4px;
+      font-size: 12px;
+      background: white;
+      box-sizing: border-box;
+    }
+
+    .debug-panel {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f7fafc;
+      border: 1px solid #dde6eb;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #455a64;
+      line-height: 1.4;
+      display: none;
+    }
+
+    .debug-panel.visible {
+      display: block;
+    }
+
+    .debug-line {
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+    
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: #ccc;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .toggle.active {
+      background: #2196F3;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    
+    .toggle.active .toggle-slider {
+      transform: translateX(20px);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Sports Scraper</h1>
+    <div class="status">
+      <span id="statusBadge" class="status-badge stopped">Stopped</span>
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Inactive</span>
+    </div>
+  </div>
+  
+  <div class="controls">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+      <button class="export" id="exportBtn">Copy CSV</button>
+    <button class="secondary" id="copyJsonBtn">Copy JSON</button>
+  </div>
+
+  <div class="filters">
+    <input id="searchInput" type="text" placeholder="Search teams or league">
+    <select id="sortSelect">
+      <option value="time_desc">Sort: Time desc</option>
+      <option value="time_asc">Sort: Time asc</option>
+      <option value="teams_asc">Sort: Teams A-Z</option>
+      <option value="score_desc">Sort: Score total desc</option>
+    </select>
+  </div>
+
+  <div class="filter-chips">
+    <button type="button" class="chip active" data-filter="all" id="chipAll">All events</button>
+    <button type="button" class="chip" data-filter="ft" id="chipFt">Only FT odds</button>
+    <button type="button" class="chip" data-filter="1h" id="chip1h">Only 1H odds</button>
+    <button type="button" class="chip" data-filter="both" id="chipBoth">FT + 1H</button>
+    <button type="button" class="reset-link" id="resetFiltersBtn">Reset filter</button>
+  </div>
+
+  <div class="meta" id="metaInfo">Last update: -</div>
+  <div class="error-card" id="errorCard">-</div>
+
+  
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Live Events</div>
+      <div class="stat-value" id="liveEventsCount">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Records</div>
+      <div class="stat-value" id="totalRecords">0</div>
+    </div>
+  </div>
+  
+  <div class="data-section">
+    <div class="section-header">Live Data</div>
+    <div id="liveDataContainer">
+      <div class="no-data">No data available. Click Start to begin scraping.</div>
+    </div>
+  </div>
+  
+  <div class="settings">
+    <div class="setting-item">
+      <span class="setting-label">Auto-scrape on page load</span>
+      <div class="toggle active" id="autoScrapeToggle">
+        <div class="toggle-slider"></div>
+      </div>
+    </div>
+
+    <div class="setting-item-column">
+      <span class="setting-label">Scrape interval</span>
+      <select id="scrapeIntervalSelect" class="setting-select">
+        <option value="3000">3 seconds</option>
+        <option value="5000">5 seconds</option>
+        <option value="10000">10 seconds</option>
+      </select>
+    </div>
+
+    <div class="setting-item">
+      <span class="setting-label">Show debug panel</span>
+      <div class="toggle" id="debugToggle">
+        <div class="toggle-slider"></div>
+      </div>
+    </div>
+
+    <div id="debugPanel" class="debug-panel">
+      <div id="debugLineLeagues" class="debug-line">Leagues found: -</div>
+      <div id="debugLineValid" class="debug-line">Valid leagues/events: -</div>
+      <div id="debugLineOdds" class="debug-line">Events with odds: -</div>
+      <div id="debugLineSections" class="debug-line">Vertical sections found: -</div>
+      <div id="debugLineRetry" class="debug-line">Retry count: -</div>
+      <div id="debugLineError" class="debug-line">Last error: -</div>
+    </div>
+  </div>
+
+  <div class="analysis-section">
+    <div class="analysis-header">FT O/U Analysis</div>
+    <div class="analysis-controls">
+      <button type="button" class="chip active" id="analysisChipAll">All</button>
+      <button type="button" class="chip" id="analysisChipBreakout">Only Breakout</button>
+      <button type="button" class="chip" id="analysisChipVol">High Volatility</button>
+      <button type="button" class="chip" id="analysisChip60">Minute 60+</button>
+      <button type="button" class="chip signal" id="analysisChipOver">Only OVER_CANDIDATE</button>
+      <button type="button" class="analysis-export-btn" id="exportOuBtn">Copy FT O/U CSV</button>
+    </div>
+    <div class="analysis-table-wrap">
+      <table class="analysis-table" id="analysisTable">
+        <thead>
+          <tr>
+            <th>Match</th>
+            <th>Score</th>
+            <th>Line</th>
+            <th>Gap</th>
+            <th>Over (Now/Δ5)</th>
+            <th>Under (Now/Δ5)</th>
+            <th>Vol</th>
+            <th>Pattern</th>
+            <th>Signal</th>
+            <th>Min</th>
+            <th>GOAL Min</th>
+            <th>FirstΔ(s)</th>
+            <th>Δ0.03(s)</th>
+          </tr>
+        </thead>
+        <tbody id="analysisTableBody">
+          <tr><td colspan="13">No FT O/U analysis yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="analysis-section">
+    <div class="analysis-header">FT O/U Minute 60 Snapshot</div>
+    <div class="analysis-table-wrap compact">
+      <table class="analysis-table" id="minute60Table">
+        <thead>
+          <tr>
+            <th>Match</th>
+            <th>Score</th>
+            <th>Line</th>
+            <th>Gap</th>
+            <th>Over</th>
+            <th>Under</th>
+            <th>Pattern</th>
+            <th>Signal</th>
+            <th>Min</th>
+          </tr>
+        </thead>
+        <tbody id="minute60TableBody">
+          <tr><td colspan="9">No minute-60 snapshots yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="analysis-section">
+    <div class="analysis-header">FT O/U Minute 60 History</div>
+    <div class="analysis-controls">
+      <button type="button" class="analysis-export-btn" id="exportMinute60HistoryBtn">Copy Minute 60 History CSV</button>
+    </div>
+    <div class="analysis-table-wrap compact">
+      <table class="analysis-table" id="minute60HistoryTable">
+        <thead>
+          <tr>
+            <th>Match</th>
+            <th>Line@60</th>
+            <th>Odds@60 (O/U)</th>
+            <th>Score@60</th>
+            <th>Score@85+</th>
+            <th>Signal@60</th>
+          </tr>
+        </thead>
+        <tbody id="minute60HistoryTableBody">
+          <tr><td colspan="6">No minute-60 history yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
