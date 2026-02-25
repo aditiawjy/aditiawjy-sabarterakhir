@@ -886,7 +886,9 @@ function parseLineBaseFromText(lineText) {
     .filter((num) => Number.isFinite(num));
 
   if (values.length === 0) return NaN;
-  return values[0];
+  if (values.length === 1) return values[0];
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Number((total / values.length).toFixed(2));
 }
 
 function createAnalysisScoreCell(row) {

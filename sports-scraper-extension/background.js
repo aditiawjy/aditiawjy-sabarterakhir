@@ -305,12 +305,17 @@ function clearFinishedAndMissingKeys(activeKeys, finishedKeys) {
 }
 
 function deleteAnalysisStateByKey(key) {
+  const snapshot = minute60SnapshotByKey[key];
+  const keepMinute60Snapshot = snapshot && !snapshot.score85Plus;
   delete ftOuHistoryByKey[key];
   delete goalStateByKey[key];
   delete goalReactionByKey[key];
-  delete minute60SnapshotByKey[key];
   delete missingCyclesByKey[key];
-  removeMinute60HistoryByKey(key);
+
+  if (!keepMinute60Snapshot) {
+    delete minute60SnapshotByKey[key];
+    removeMinute60HistoryByKey(key);
+  }
 }
 
 function removeMinute60HistoryByKey(eventIdKey) {
