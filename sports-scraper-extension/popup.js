@@ -31,12 +31,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('chip1h').addEventListener('click', () => setOddsFilter('1h'));
   document.getElementById('chipBoth').addEventListener('click', () => setOddsFilter('both'));
   document.getElementById('resetFiltersBtn').addEventListener('click', resetFilters);
-  document.getElementById('analysisChipAll').addEventListener('click', () => setAnalysisFilter('all'));
-  document.getElementById('analysisChipBreakout').addEventListener('click', () => setAnalysisFilter('breakout'));
-  document.getElementById('analysisChipVol').addEventListener('click', () => setAnalysisFilter('high_vol'));
-  document.getElementById('analysisChip60').addEventListener('click', () => setAnalysisFilter('minute_60'));
-  document.getElementById('analysisChipOver').addEventListener('click', () => setAnalysisFilter('over_only'));
-  document.getElementById('exportOuBtn').addEventListener('click', exportOuAnalysisCsv);
+  const analysisChipAll = document.getElementById('analysisChipAll');
+  if (analysisChipAll) {
+    analysisChipAll.addEventListener('click', () => setAnalysisFilter('all'));
+    document.getElementById('analysisChipBreakout').addEventListener('click', () => setAnalysisFilter('breakout'));
+    document.getElementById('analysisChipVol').addEventListener('click', () => setAnalysisFilter('high_vol'));
+    document.getElementById('analysisChip60').addEventListener('click', () => setAnalysisFilter('minute_60'));
+    document.getElementById('analysisChipOver').addEventListener('click', () => setAnalysisFilter('over_only'));
+    document.getElementById('exportOuBtn').addEventListener('click', exportOuAnalysisCsv);
+  }
+
   document.getElementById('exportMinute60HistoryBtn').addEventListener('click', exportMinute60HistoryCsv);
 
   loadSettings();
