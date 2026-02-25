@@ -221,9 +221,10 @@ class SportsDataScraper {
     
     // Extract team names
     const teamElements = eventElement.querySelectorAll('.eventlist_asia_fe_EventCard_teamNameText, .eventlist_asia_fe_EventCard_teamName');
-    const teams = Array.from(teamElements)
+    const rawTeams = Array.from(teamElements)
       .map((el) => el.textContent?.trim() || '')
       .filter(Boolean);
+    const teams = this.getCanonicalTeams(rawTeams);
 
     if (!this.isValidEvent(teams, score, gameTime)) {
       return null;
