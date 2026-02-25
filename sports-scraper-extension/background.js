@@ -91,6 +91,10 @@ function handleUpdateData(request, sender) {
   }
 
   const ftOuSnapshots = Array.isArray(request.data?.ftOuSnapshots) ? request.data.ftOuSnapshots : [];
+
+  // Flush current state to CSV BEFORE processing (which may remove finished entries).
+  autoUpdateMinute60CsvFile(ouMinute60History);
+
   const ouAnalysisLatest = processFtOuSnapshots(ftOuSnapshots);
   const minute60Snapshots = captureMinute60Snapshots(ouAnalysisLatest);
   ouMinute60History = sanitizeMinute60History(ouMinute60History);
@@ -313,14 +317,20 @@ function deleteAnalysisStateByKey(key) {
   delete missingCyclesByKey[key];
 
   if (!keepMinute60Snapshot) {
+    const capturedAt = snapshot?.timestamp || null;
     delete minute60SnapshotByKey[key];
-    removeMinute60HistoryByKey(key);
+    removeMinute60HistoryByKey(key, capturedAt);
   }
 }
 
-function removeMinute60HistoryByKey(eventIdKey) {
+function removeMinute60HistoryByKey(eventIdKey, capturedAt60) {
   if (!eventIdKey) return;
-  ouMinute60History = ouMinute60History.filter((row) => row.eventIdKey !== eventIdKey);
+  ouMinute60History = ouMinute60History.filter((row) => {
+    if (row.eventIdKey !== eventIdKey) return true;
+    // Only remove the specific match; keep other matches for the same teams.
+    if (capturedAt60 && row.capturedAt60 !== capturedAt60) return true;
+    return false;
+  });
 }
 
 function isFinishedSnapshot(snapshot) {
@@ -502,7 +512,9 @@ function sanitizeMinute60History(rows) {
 function autoUpdateMinute60CsvFile(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return;
 
-  const signature = `${rows.length}|${rows[0]?.capturedAt60 || ''}|${rows[0]?.capturedAt85Plus || ''}`;
+  const signature = rows
+    .map((r) => `${r.eventIdKey}|${r.capturedAt60 || ''}|${r.capturedAt85Plus || ''}`)
+    .join('\n');
   if (signature === lastMinute60CsvSignature) return;
   lastMinute60CsvSignature = signature;
 
