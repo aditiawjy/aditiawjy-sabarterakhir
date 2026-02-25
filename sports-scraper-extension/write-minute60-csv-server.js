@@ -72,25 +72,31 @@ function toCsv(header, rows) {
   return csv;
 }
 
+function buildHistoryKey(row) {
+  const eventKey = row.eventIdKey || '';
+  const capturedAt = row.capturedAt60 || '';
+  return `${eventKey}|${capturedAt}`;
+}
+
 function mergeCsv(existing, incoming) {
   const header = incoming.header.length > 0 ? incoming.header : existing.header;
   if (header.length === 0) {
     return { header: [], rows: [] };
   }
 
-  const incomingKeys = new Set();
+  const seen = new Set();
   const merged = [];
 
   incoming.rows.forEach((row) => {
-    const key = row.eventIdKey;
-    if (!key) return;
-    incomingKeys.add(key);
+    const key = buildHistoryKey(row);
+    if (!row.eventIdKey) return;
+    seen.add(key);
     merged.push(row);
   });
 
   existing.rows.forEach((row) => {
-    const key = row.eventIdKey;
-    if (!key || incomingKeys.has(key)) return;
+    const key = buildHistoryKey(row);
+    if (!row.eventIdKey || seen.has(key)) return;
     merged.push(row);
   });
 
