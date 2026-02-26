@@ -556,16 +556,17 @@ function sendMessageToActiveTab(message, onSuccess, onFailure) {
 // Start scraping
 function startScraping() {
   updateScrapingUI(true);
-  
-  // Send message to content script
-  sendMessageToActiveTab(
-    { action: 'startScraping' },
-    null,
-    () => {
-      showError('Open a supported website tab, refresh it, then try again');
-      stopScraping();
-    }
-  );
+  chrome.runtime.sendMessage({ action: 'resetMinute60History' }, () => {
+    // Send message to content script
+    sendMessageToActiveTab(
+      { action: 'startScraping' },
+      null,
+      () => {
+        showError('Open a supported website tab, refresh it, then try again');
+        stopScraping();
+      }
+    );
+  });
 }
 
 // Stop scraping

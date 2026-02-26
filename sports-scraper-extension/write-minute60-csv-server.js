@@ -72,35 +72,42 @@ function toCsv(header, rows) {
   return csv;
 }
 
-function buildHistoryKey(row) {
-  const eventKey = row.eventIdKey || '';
-  const capturedAt = row.capturedAt60 || '';
-  return `${eventKey}|${capturedAt}`;
-}
-
 function mergeCsv(existing, incoming) {
   const header = incoming.header.length > 0 ? incoming.header : existing.header;
   if (header.length === 0) {
     return { header: [], rows: [] };
   }
 
-  const seen = new Set();
-  const merged = [];
-
-  incoming.rows.forEach((row) => {
-    const key = buildHistoryKey(row);
-    if (!row.eventIdKey) return;
-    seen.add(key);
-    merged.push(row);
-  });
-
+  const existingByEvent = new Map();
   existing.rows.forEach((row) => {
-    const key = buildHistoryKey(row);
-    if (!row.eventIdKey || seen.has(key)) return;
-    merged.push(row);
+    if (!row.eventIdKey) return;
+    existingByEvent.set(row.eventIdKey, row);
   });
 
-  return { header, rows: merged };
+  const mergedByEvent = new Map();
+  incoming.rows.forEach((row) => {
+    if (!row.eventIdKey) return;
+    const existingRow = existingByEvent.get(row.eventIdKey);
+    if (existingRow) {
+      if (!row.score85Plus && existingRow.score85Plus) row.score85Plus = existingRow.score85Plus;
+      if (!row.minute85Plus && existingRow.minute85Plus) row.minute85Plus = existingRow.minute85Plus;
+      if (!row.capturedAt85Plus && existingRow.capturedAt85Plus) row.capturedAt85Plus = existingRow.capturedAt85Plus;
+    }
+
+    const current = mergedByEvent.get(row.eventIdKey);
+    if (!current) {
+      mergedByEvent.set(row.eventIdKey, row);
+      return;
+    }
+
+    const currentMs = Date.parse(current.capturedAt60) || 0;
+    const incomingMs = Date.parse(row.capturedAt60) || 0;
+    if (incomingMs >= currentMs) {
+      mergedByEvent.set(row.eventIdKey, row);
+    }
+  });
+
+  return { header, rows: Array.from(mergedByEvent.values()) };
 }
 
 function send(res, status, body = '') {
@@ -141,24 +148,7 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      const incoming = parseCsv(payload.content);
-      let existing = { header: [], rows: [] };
-      if (fs.existsSync(ALLOWED_PATH)) {
-        const current = fs.readFileSync(ALLOWED_PATH, 'utf8');
-        existing = parseCsv(current);
-      }
-
-      if (incoming.rows.length === 0 && existing.header.length > 0) {
-        send(res, 200, 'ok');
-        return;
-      }
-
-      const merged = mergeCsv(existing, incoming);
-      const content = merged.header.length > 0
-        ? toCsv(merged.header, merged.rows)
-        : payload.content;
-
-      fs.writeFileSync(ALLOWED_PATH, content, 'utf8');
+      fs.writeFileSync(ALLOWED_PATH, payload.content, 'utf8');
       send(res, 200, 'ok');
     } catch (e) {
       send(res, 500, 'Write failed');

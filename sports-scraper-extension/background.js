@@ -8,6 +8,7 @@ let minute60SnapshotByKey = {};
 let missingCyclesByKey = {};
 let ouMinute60History = [];
 let lastMinute60CsvSignature = '';
+let minute60SessionStartMs = 0;
 const LOCAL_CSV_WRITE_URL = 'http://127.0.0.1:8765/write-minute60-csv';
 let isHydrated = false;
 let isHydrating = false;
@@ -27,9 +28,17 @@ const MAX_MISSING_CYCLES_BEFORE_CLEAR = 3;
 const MAX_MINUTE60_HISTORY = 1000;
 const MINUTE60_CAPTURE_MIN = 60;
 const MINUTE60_CAPTURE_MAX = 63;
+const MINUTE85_CAPTURE_MIN = 84;
 
 // Listen for messages from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'resetMinute60History') {
+    resetMinute60HistoryState(() => {
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
   if (request.action === 'updateData') {
     hydrateState(() => {
       handleUpdateData(request, sender);
@@ -80,6 +89,9 @@ function hydrateState(callback) {
 }
 
 function handleUpdateData(request, sender) {
+  if (!minute60SessionStartMs) {
+    minute60SessionStartMs = Date.now();
+  }
   latestData = request.data;
   dataHistory.push(request.data);
   const liveEvents = Array.isArray(request.data?.liveEvents) ? request.data.liveEvents : [];
@@ -92,31 +104,24 @@ function handleUpdateData(request, sender) {
 
   const ftOuSnapshots = Array.isArray(request.data?.ftOuSnapshots) ? request.data.ftOuSnapshots : [];
 
-  // Capture score85Plus from liveEvents (works even when FT OU market is closed).
-  captureScore85PlusFromLiveEvents(liveEvents, request.data?.timestamp);
-
   // Capture final scores for matches that went FT in ftOuSnapshots.
   captureFinalScoresForFinishedMatches(ftOuSnapshots);
 
-  // Flush state (including newly captured 85+ data) to CSV BEFORE cleanup removes entries.
-  autoUpdateMinute60CsvFile(ouMinute60History);
-
+  // Process FT O/U snapshots and create/update minute-60 snapshots first.
   const ouAnalysisLatest = processFtOuSnapshots(ftOuSnapshots);
   const minute60Snapshots = captureMinute60Snapshots(ouAnalysisLatest);
+
+  // Capture score85Plus from liveEvents AFTER snapshots are created so newly
+  // created snapshots can be matched to live events at minute 84+ in the same cycle.
+  // This fixes the race condition where the FT O/U market closes at minute 60-62
+  // and the live event at minute 84+ disappears before the next cycle.
+  captureScore85PlusFromLiveEvents(liveEvents, request.data?.timestamp);
+
   ouMinute60History = sanitizeMinute60History(ouMinute60History);
   autoUpdateMinute60CsvFile(ouMinute60History);
 
-  // Clean up entries from memory after they've been flushed to CSV.
-  // Finished entries (have score85Plus) are safely in the CSV via server merge.
-  // Stale entries (captured 30+ min ago, match is long over) will never get score85Plus.
-  const STALE_MS = 30 * 60 * 1000;
-  const nowMs = Date.now();
-  ouMinute60History = ouMinute60History.filter((row) => {
-    if (isMinute60HistoryFinished(row)) return false;
-    const capturedMs = Date.parse(row.capturedAt60) || 0;
-    if (capturedMs > 0 && (nowMs - capturedMs) > STALE_MS) return false;
-    return true;
-  });
+  // Keep history rows so CSV grows over time.
+  // Cap is still enforced in upsertMinute60History via MAX_MINUTE60_HISTORY.
 
   // Store in chrome storage
   chrome.storage.local.set({
@@ -175,6 +180,23 @@ function processFtOuSnapshots(snapshots) {
     if (!snapshot || !snapshot.eventIdKey) return;
 
     if (isFinishedSnapshot(snapshot)) {
+      const minute = toNumber(snapshot.minute) || 90;
+      const score = snapshot.score || '-';
+      const ts = snapshot.timestamp || new Date().toISOString();
+
+      const snap = minute60SnapshotByKey[snapshot.eventIdKey];
+      if (snap && !snap.score85Plus) {
+        snap.score85Plus = score;
+        snap.minute85Plus = minute;
+        snap.timestamp85Plus = ts;
+      }
+
+      updateMinute60History85Plus(snapshot.eventIdKey, {
+        score85Plus: score,
+        minute85Plus: minute,
+        capturedAt85Plus: ts
+      });
+
       finishedKeys.add(snapshot.eventIdKey);
       return;
     }
@@ -320,10 +342,16 @@ function clearFinishedAndMissingKeys(activeKeys, finishedKeys) {
     // Don't count missing cycles if still waiting for score85Plus from liveEvents.
     // This keeps the snapshot alive so captureScore85PlusFromLiveEvents can fill it
     // once the match actually reaches minute 85+.
+    // But limit the wait to 10 real minutes — V-Soccer 12-min matches go from
+    // minute 60 to FT in ~4 real minutes, so 10 minutes is more than enough.
     const snap = minute60SnapshotByKey[key];
     if (snap && !snap.score85Plus) {
-      missingCyclesByKey[key] = 0;
-      return;
+      const capturedMs = Date.parse(snap.timestamp) || 0;
+      const MAX_WAIT_MS = 10 * 60 * 1000;
+      if (capturedMs > 0 && (Date.now() - capturedMs) < MAX_WAIT_MS) {
+        missingCyclesByKey[key] = 0;
+        return;
+      }
     }
 
     const currentMissing = Number(missingCyclesByKey[key] || 0) + 1;
@@ -340,17 +368,19 @@ function deleteAnalysisStateByKey(key) {
   const history = ftOuHistoryByKey[key];
 
   // Fill score85Plus from last known history data before cleaning up,
-  // but ONLY if the last entry is at minute 85 or later.
+  // but ONLY if the last entry is at or beyond the 85+ window.
   const needsFill = snapshot && !snapshot.score85Plus;
+  let filled = false;
   if (needsFill && history && history.length > 0) {
     const lastEntry = history[history.length - 1];
     const lastMinute = Number(lastEntry.minute) || 0;
-    if (lastMinute >= 85) {
+    if (lastMinute >= MINUTE85_CAPTURE_MIN) {
       updateMinute60History85Plus(key, {
         score85Plus: lastEntry.score || '-',
         minute85Plus: lastMinute,
         capturedAt85Plus: lastEntry.timestamp || new Date().toISOString()
       });
+      filled = true;
     }
   }
 
@@ -361,11 +391,8 @@ function deleteAnalysisStateByKey(key) {
 
   if (snapshot) {
     delete minute60SnapshotByKey[key];
-    // If score85Plus was already flushed to CSV, remove the history entry.
-    // If we just filled it, keep the entry so it gets flushed by the next CSV write.
-    if (!needsFill) {
-      removeMinute60HistoryByKey(key, snapshot.timestamp || null);
-    }
+    // Keep rows in history; stale cleanup removes old unfinished rows.
+    return;
   }
 }
 
@@ -481,18 +508,22 @@ function captureMinute60Snapshots(rows) {
       });
     }
 
-    if (minute >= 85) {
+    if (minute >= MINUTE85_CAPTURE_MIN) {
       const snapshot = minute60SnapshotByKey[row.eventIdKey];
-      if (snapshot && !snapshot.score85Plus) {
+      const nextTs = row.lastUpdated || new Date().toISOString();
+      if (snapshot && (
+        !snapshot.score85Plus
+        || shouldReplace85Plus(snapshot.minute85Plus, snapshot.timestamp85Plus, minute, nextTs)
+      )) {
         snapshot.score85Plus = row.score || '-';
         snapshot.minute85Plus = minute;
-        snapshot.timestamp85Plus = row.lastUpdated || new Date().toISOString();
+        snapshot.timestamp85Plus = nextTs;
       }
 
       updateMinute60History85Plus(row.eventIdKey, {
         score85Plus: row.score || '-',
         minute85Plus: minute,
-        capturedAt85Plus: row.lastUpdated || new Date().toISOString()
+        capturedAt85Plus: nextTs
       });
     }
   });
@@ -512,15 +543,17 @@ function captureFinalScoresForFinishedMatches(snapshots) {
     if (!isFinishedSnapshot(snapshot)) return;
 
     const m60snap = minute60SnapshotByKey[snapshot.eventIdKey];
-    if (!m60snap || m60snap.score85Plus) return;
+    if (!m60snap) return;
 
     const score = snapshot.score || '-';
     const minute = toNumber(snapshot.minute) || 90;
     const ts = snapshot.timestamp || new Date().toISOString();
 
-    m60snap.score85Plus = score;
-    m60snap.minute85Plus = minute;
-    m60snap.timestamp85Plus = ts;
+    if (!m60snap.score85Plus || shouldReplace85Plus(m60snap.minute85Plus, m60snap.timestamp85Plus, minute, ts)) {
+      m60snap.score85Plus = score;
+      m60snap.minute85Plus = minute;
+      m60snap.timestamp85Plus = ts;
+    }
 
     updateMinute60History85Plus(snapshot.eventIdKey, {
       score85Plus: score,
@@ -532,10 +565,35 @@ function captureFinalScoresForFinishedMatches(snapshots) {
 
 function normalizeKeyPart(value) {
   return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/\[V\]/gi, '')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+function extractNormalizedTeamsPair(teamsText, fallbackKey) {
+  const partsFromText = String(teamsText || '')
+    .split(/\s+vs\s+/i)
+    .map((t) => normalizeKeyPart(t))
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (partsFromText.length === 2) {
+    return partsFromText;
+  }
+
+  const keyParts = String(fallbackKey || '').split('|');
+  if (keyParts.length >= 4) {
+    const teamParts = keyParts.slice(1, -1).map((t) => normalizeKeyPart(t)).filter(Boolean);
+    if (teamParts.length >= 2) {
+      return teamParts.slice(0, 2);
+    }
+  }
+
+  return [];
 }
 
 function parseGameMinute(gameTime) {
@@ -543,8 +601,72 @@ function parseGameMinute(gameTime) {
   return match ? Number(match[1]) : 0;
 }
 
+function shouldReplace85Plus(existingMinute, existingTs, nextMinute, nextTs) {
+  const currentMinute = Number(existingMinute) || 0;
+  const incomingMinute = Number(nextMinute) || 0;
+  if (incomingMinute > currentMinute) return true;
+  if (incomingMinute < currentMinute) return false;
+
+  const currentTs = Date.parse(existingTs || '') || 0;
+  const incomingTs = Date.parse(nextTs || '') || 0;
+  return incomingTs >= currentTs;
+}
+
 function captureScore85PlusFromLiveEvents(liveEvents, timestamp) {
   if (!Array.isArray(liveEvents)) return;
+
+  const pendingHistoryRows = ouMinute60History.filter(
+    (row) => row?.eventIdKey && !isMinute60HistoryFinished(row)
+  );
+  const historyRowByEventId = new Map();
+  pendingHistoryRows.forEach((row) => {
+    const current = historyRowByEventId.get(row.eventIdKey);
+    const currentMs = Date.parse(current?.capturedAt60 || 0) || 0;
+    const rowMs = Date.parse(row.capturedAt60 || 0) || 0;
+    if (!current || rowMs >= currentMs) {
+      historyRowByEventId.set(row.eventIdKey, row);
+    }
+  });
+
+  const pendingSnapshotKeys = Object.keys(minute60SnapshotByKey).filter(
+    (k) => !minute60SnapshotByKey[k]?.score85Plus
+  );
+  const pendingCandidateKeys = Array.from(new Set([
+    ...pendingSnapshotKeys,
+    ...pendingHistoryRows.map((row) => row.eventIdKey)
+  ]));
+
+  const pendingByLeagueAndOrderedTeams = new Map();
+  const pendingByUnorderedTeams = new Map();
+
+  pendingCandidateKeys.forEach((key) => {
+    const source = minute60SnapshotByKey[key] || historyRowByEventId.get(key);
+    if (!source) return;
+
+    const league = normalizeKeyPart(source.league || key.split('|')[0] || '-');
+    const teamsPair = extractNormalizedTeamsPair(source.teams, key);
+    if (teamsPair.length < 2) return;
+
+    const ordered = `${teamsPair[0]}|${teamsPair[1]}`;
+    const reversed = `${teamsPair[1]}|${teamsPair[0]}`;
+    const unordered = [teamsPair[0], teamsPair[1]].sort().join('|');
+
+    const leagueOrderedA = `${league}|${ordered}`;
+    const leagueOrderedB = `${league}|${reversed}`;
+    if (!pendingByLeagueAndOrderedTeams.has(leagueOrderedA)) pendingByLeagueAndOrderedTeams.set(leagueOrderedA, []);
+    if (!pendingByLeagueAndOrderedTeams.has(leagueOrderedB)) pendingByLeagueAndOrderedTeams.set(leagueOrderedB, []);
+    pendingByLeagueAndOrderedTeams.get(leagueOrderedA).push(key);
+    pendingByLeagueAndOrderedTeams.get(leagueOrderedB).push(key);
+
+    if (!pendingByUnorderedTeams.has(unordered)) pendingByUnorderedTeams.set(unordered, []);
+    pendingByUnorderedTeams.get(unordered).push(key);
+  });
+
+  // Debug: log pending snapshots and high-minute events to diagnose capture failures.
+  const pendingKeys = pendingCandidateKeys;
+  if (pendingKeys.length > 0) {
+    console.log('[score85+] Pending snapshots waiting for score85Plus:', pendingKeys);
+  }
 
   liveEvents.forEach((league) => {
     const leagueName = league.league || '-';
@@ -559,28 +681,82 @@ function captureScore85PlusFromLiveEvents(liveEvents, timestamp) {
         .slice(0, 2);
       if (cleaned.length < 2) return;
 
-      const normalizedTeams = cleaned.map((t) => normalizeKeyPart(t)).join('|');
-      const eventIdKey = `${normalizedLeague}|${normalizedTeams}|FT_OU`;
-
-      const m60snap = minute60SnapshotByKey[eventIdKey];
-      if (!m60snap || m60snap.score85Plus) return;
+      const normalizedTeamsList = cleaned.map((t) => normalizeKeyPart(t));
+      const normalizedTeams = normalizedTeamsList.join('|');
+      let eventIdKey = `${normalizedLeague}|${normalizedTeams}|FT_OU`;
 
       const minute = parseGameMinute(event.gameTime || '');
       const gamePart = String(event.gamePart || '').trim().toUpperCase();
+
+      let m60snap = minute60SnapshotByKey[eventIdKey];
+      if (!m60snap) {
+        const orderedKey = `${normalizedLeague}|${normalizedTeamsList[0]}|${normalizedTeamsList[1]}`;
+        const reversedKey = `${normalizedLeague}|${normalizedTeamsList[1]}|${normalizedTeamsList[0]}`;
+        const unorderedKey = [normalizedTeamsList[0], normalizedTeamsList[1]].sort().join('|');
+
+        const candidates = [
+          ...(pendingByLeagueAndOrderedTeams.get(orderedKey) || []),
+          ...(pendingByLeagueAndOrderedTeams.get(reversedKey) || []),
+          ...(pendingByUnorderedTeams.get(unorderedKey) || [])
+        ];
+
+        if (candidates.length > 0) {
+          const unique = Array.from(new Set(candidates));
+          unique.sort((a, b) => {
+            const tsA = Date.parse(
+              minute60SnapshotByKey[a]?.timestamp || historyRowByEventId.get(a)?.capturedAt60 || 0
+            ) || 0;
+            const tsB = Date.parse(
+              minute60SnapshotByKey[b]?.timestamp || historyRowByEventId.get(b)?.capturedAt60 || 0
+            ) || 0;
+            return tsB - tsA;
+          });
+
+          const matchedKey = unique.find((k) => {
+            const snap = minute60SnapshotByKey[k];
+            if (snap && !snap.score85Plus) return true;
+            return findOpenMinute60HistoryIndex(k) >= 0;
+          });
+          if (matchedKey) {
+            eventIdKey = matchedKey;
+            m60snap = minute60SnapshotByKey[matchedKey];
+          }
+        }
+      }
+
+      // Debug: log events at minute 70+ to see what's available.
+      if (minute >= 70 || gamePart === 'FT' || gamePart === 'FINISHED' || gamePart === 'END') {
+        const hasSnap = !!m60snap;
+        const hasHistory = findOpenMinute60HistoryIndex(eventIdKey) >= 0;
+        console.log(`[score85+] Event at min ${minute} (${gamePart}): ${eventIdKey} | snap=${hasSnap} | history=${hasHistory} | gameTime="${event.gameTime}" | score="${event.score}"`);
+      }
+
+      const hasPendingHistory = findOpenMinute60HistoryIndex(eventIdKey) >= 0;
+      const hasAnyHistory = findLatestMinute60HistoryIndex(eventIdKey) >= 0;
+      if (!m60snap && !hasPendingHistory && !hasAnyHistory) return;
+
       const isFT = gamePart === 'FT' || gamePart === 'FINISHED' || gamePart === 'END';
 
-      if (minute < 85 && !isFT) return;
+      if (minute < MINUTE85_CAPTURE_MIN && !isFT) return;
 
       const score = event.score || '-';
       const ts = timestamp || new Date().toISOString();
 
-      m60snap.score85Plus = score;
-      m60snap.minute85Plus = isFT ? (minute || 90) : minute;
-      m60snap.timestamp85Plus = ts;
+      console.log(`[score85+] CAPTURED: ${eventIdKey} score=${score} minute=${minute} gamePart=${gamePart}`);
+
+      const targetMinute = isFT ? (minute || 90) : minute;
+      if (m60snap && (
+        !m60snap.score85Plus
+        || shouldReplace85Plus(m60snap.minute85Plus, m60snap.timestamp85Plus, targetMinute, ts)
+      )) {
+        m60snap.score85Plus = score;
+        m60snap.minute85Plus = targetMinute;
+        m60snap.timestamp85Plus = ts;
+      }
 
       updateMinute60History85Plus(eventIdKey, {
         score85Plus: score,
-        minute85Plus: isFT ? (minute || 90) : minute,
+        minute85Plus: targetMinute,
         capturedAt85Plus: ts
       });
     });
@@ -604,15 +780,41 @@ function upsertMinute60History(eventIdKey, entry) {
 }
 
 function updateMinute60History85Plus(eventIdKey, payload) {
-  const idx = findOpenMinute60HistoryIndex(eventIdKey);
+  let idx = findOpenMinute60HistoryIndex(eventIdKey);
+  if (idx < 0) {
+    idx = findLatestMinute60HistoryIndex(eventIdKey);
+  }
   if (idx < 0) return;
 
-  if (!ouMinute60History[idx].score85Plus) {
+  const current = ouMinute60History[idx];
+  const canWrite = !current.score85Plus || shouldReplace85Plus(
+    current.minute85Plus,
+    current.capturedAt85Plus,
+    payload.minute85Plus,
+    payload.capturedAt85Plus
+  );
+
+  if (canWrite) {
     ouMinute60History[idx] = {
-      ...ouMinute60History[idx],
+      ...current,
       ...payload
     };
   }
+}
+
+function findLatestMinute60HistoryIndex(eventIdKey) {
+  let bestIdx = -1;
+  let bestMs = -1;
+  for (let i = 0; i < ouMinute60History.length; i += 1) {
+    const row = ouMinute60History[i];
+    if (row.eventIdKey !== eventIdKey) continue;
+    const ms = Date.parse(row.capturedAt60 || '') || 0;
+    if (ms >= bestMs) {
+      bestMs = ms;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function findOpenMinute60HistoryIndex(eventIdKey) {
@@ -640,14 +842,43 @@ function sanitizeMinute60History(rows) {
 function autoUpdateMinute60CsvFile(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return;
 
-  const signature = rows
+  const exportRows = minute60SessionStartMs
+    ? rows.filter((row) => {
+      if (isMinute60HistoryFinished(row)) return true;
+      const capturedMs = Date.parse(row?.capturedAt60 || '') || 0;
+      return capturedMs >= minute60SessionStartMs;
+    })
+    : rows;
+  if (exportRows.length === 0) return;
+
+  const signature = exportRows
     .map((r) => `${r.eventIdKey}|${r.capturedAt60 || ''}|${r.capturedAt85Plus || ''}`)
     .join('\n');
   if (signature === lastMinute60CsvSignature) return;
   lastMinute60CsvSignature = signature;
 
-  const csv = buildMinute60HistoryCsv(rows);
+  const csv = buildMinute60HistoryCsv(exportRows);
   writeMinute60CsvToLocalFile(csv);
+}
+
+function resetMinute60HistoryState(done) {
+  minute60SnapshotByKey = {};
+  lastMinute60CsvSignature = '';
+  minute60SessionStartMs = Date.now();
+
+  chrome.storage.local.get(['ouMinute60History'], (result) => {
+    const existing = sanitizeMinute60History(result.ouMinute60History || []);
+    ouMinute60History = existing.filter((row) => isMinute60HistoryFinished(row));
+
+    chrome.storage.local.set({
+      ouMinute60History,
+      ouMinute60Snapshots: []
+    }, () => {
+      const csv = buildMinute60HistoryCsv(ouMinute60History);
+      writeMinute60CsvToLocalFile(csv);
+      if (typeof done === 'function') done();
+    });
+  });
 }
 
 function buildMinute60HistoryCsv(rows) {
